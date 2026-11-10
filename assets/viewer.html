@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Potree Viewer</title>
+<link rel="stylesheet" href="./libs/potree/potree.css">
+<link rel="stylesheet" href="./libs/jquery-ui/jquery-ui.min.css">
+<link rel="stylesheet" href="./libs/openlayers3/ol.css">
+<link rel="stylesheet" href="./libs/spectrum/spectrum.css">
+<link rel="stylesheet" href="./libs/jstree/themes/mixed/style.css">
+<style>
+html,body{height:100%;margin:0;font-family:Arial,sans-serif;background:#132226;color:#eef4f5}
+#status{position:fixed;right:18px;top:18px;z-index:2000;max-width:430px;padding:12px 16px;background:#132226ed;border:1px solid #53666b;border-radius:10px;font-size:13px;white-space:pre-line}
+#status.error{background:#502725ed;border-color:#ca8f87}
+#access{position:fixed;inset:0;background:#132226;z-index:3000;display:none;align-items:center;justify-content:center}
+#access form{width:min(380px,80vw);padding:32px;border:1px solid #53666b;border-radius:16px;background:#1d3035}
+#access h1{margin:0 0 10px;font-size:24px}#access p{font-size:14px;color:#c4d2d6;line-height:1.5}
+#access input{box-sizing:border-box;width:100%;padding:12px;margin:8px 0;border:1px solid #698087;border-radius:6px;background:#132226;color:white;font-size:16px}
+#access button{padding:12px 18px;background:#91cfbd;border:0;border-radius:6px;color:#122720;font-weight:bold;cursor:pointer}
+#access-error{min-height:20px;color:#f5b9ae;font-size:13px}
+</style>
+</head>
+<body>
+<div class="potree_container" style="position:absolute;width:100%;height:100%"><div id="potree_render_area"></div><div id="potree_sidebar_container"></div></div>
+<div id="status" role="status">Starting viewer…</div>
+<div id="access"><form id="access-form"><h1 id="access-title">Project viewer</h1><p>Enter the project password.</p><input id="password" type="password" autocomplete="current-password" aria-label="Project password"><div id="access-error" role="alert"></div><button type="submit">Open viewer</button></form></div>
+<script id="project-config" type="application/json">{{CONFIG_JSON}}</script>
+<script>
+window.viewerFailures=[];
+window.showViewerFailure=function(message){message=String(message);if(!window.viewerFailures.includes(message))window.viewerFailures.push(message);const e=document.getElementById('status');e.style.display='block';e.classList.add('error');e.textContent=window.viewerFailures.join('\n');};
+window.addEventListener('error',e=>{if(e.message)window.showViewerFailure(e.message);else if(e.target&&e.target.src)window.showViewerFailure('Could not load '+e.target.src);},true);
+window.addEventListener('unhandledrejection',e=>window.showViewerFailure(e.reason&&e.reason.message||e.reason));
+// Potree retries failed node requests internally. Surface network/worker failures here.
+const viewerFetch=window.fetch.bind(window);
+window.fetch=async function(input,options){try{const response=await viewerFetch(input,options);if(!response.ok)throw new Error('HTTP '+response.status+' loading '+input);const range=options&&new Headers(options.headers).get('Range');if(range&&response.status!==206)throw new Error('Hosting must support HTTP byte ranges for '+input);return response;}catch(error){window.showViewerFailure(error.message);throw error;}};
+const ViewerWorker=window.Worker;
+window.Worker=class extends ViewerWorker{constructor(url,options){super(url,options);this.addEventListener('error',event=>window.showViewerFailure('Point decoder failed: '+(event.message||url)));}};
+if(location.protocol==='file:')window.showViewerFailure('Open this project through the converter’s Preview button or --serve command. Browsers require HTTP for point cloud files.');
+</script>
+<script src="./libs/jquery/jquery-3.1.1.min.js"></script>
+<script src="./libs/spectrum/spectrum.js"></script>
+<script src="./libs/jquery-ui/jquery-ui.min.js"></script>
+<script src="./libs/other/BinaryHeap.js"></script>
+<script src="./libs/tween/tween.min.js"></script>
+<script src="./libs/d3/d3.js"></script>
+<script src="./libs/proj4/proj4.js"></script>
+<script src="./libs/openlayers3/ol.js"></script>
+<script src="./libs/i18next/i18next.js"></script>
+<script src="./libs/jstree/jstree.js"></script>
+<script src="./libs/potree/potree.js"></script>
+<script src="./libs/plasio/js/laslaz.js"></script>
+<script type="module">
+import * as THREE from './libs/three.js/build/three.module.js';
+import {OBJLoader} from './libs/three.js/loaders/OBJLoader.js';
+import {MTLLoader} from './libs/three.js/loaders/MTLLoader.js';
+const config=JSON.parse(document.getElementById('project-config').textContent);
+document.title=config.title;
+document.getElementById('access-title').textContent=config.title;
+const access=document.getElementById('access');
+if(config.password){
+  access.style.display='flex';
+  document.getElementById('password').focus();
+  await new Promise(resolve=>document.getElementById('access-form').addEventListener('submit',event=>{
+    event.preventDefault();
+    if(document.getElementById('password').value===config.password){access.style.display='none';resolve();}
+    else document.getElementById('access-error').textContent='Incorrect password. Please try again.';
+  }));
+}
+const status=document.getElementById('status');
+window.THREE=THREE;
+const viewer=window.viewer=new Potree.Viewer(document.getElementById('potree_render_area'));
+viewer.setEDLEnabled(true);viewer.setFOV(60);viewer.setPointBudget(2000000);viewer.setControls(viewer.earthControls);
+// Potree's description is HTML; supply text through DOM escaping.
+const description=document.createElement('span');description.textContent=config.title;viewer.setDescription(description.innerHTML);
+viewer.loadGUI(()=>{viewer.setLanguage('en');$('#menu_tools').next().show();});
+if(config.lights){const key=new THREE.DirectionalLight(0xffffff,1);key.position.set(1,-1,2);viewer.scene.scene.add(key);viewer.scene.scene.add(new THREE.AmbientLight(0xffffff,0.55));}
+const modelObjects=[];
+function fitScene(){
+  if(config.camera){viewer.scene.view.position.set(...config.camera.position);viewer.scene.view.lookAt(new THREE.Vector3(...config.camera.target));return;}
+  const bounds=new THREE.Box3();
+  for(const cloud of viewer.scene.pointclouds){cloud.updateMatrixWorld(true);bounds.union(cloud.boundingBox.clone().applyMatrix4(cloud.matrixWorld));}
+  for(const model of modelObjects){model.updateMatrixWorld(true);bounds.union(new THREE.Box3().setFromObject(model));}
+  if(bounds.isEmpty())return;
+  const sphere=bounds.getBoundingSphere(new THREE.Sphere());
+  const camera=viewer.scene.cameraP;const area=viewer.renderer.domElement;
+  const halfVertical=THREE.MathUtils.degToRad(camera.fov)/2;
+  const halfHorizontal=Math.atan(Math.tan(halfVertical)*Math.max(area.clientWidth,1)/Math.max(area.clientHeight,1));
+  const distance=Math.max(sphere.radius/Math.sin(Math.max(0.01,Math.min(halfVertical,halfHorizontal))),1)*1.2;
+  viewer.scene.view.position.copy(sphere.center.clone().addScaledVector(new THREE.Vector3(1,-1,0.75).normalize(),distance));
+  viewer.scene.view.lookAt(sphere.center);viewer.setMoveSpeed(Math.max(sphere.radius/5,1));
+}
+// Include mesh bounds in clipping calculations; Potree otherwise considers only clouds.
+viewer.addEventListener('update',()=>{
+  if(!modelObjects.length)return;const camera=viewer.scene.getActiveCamera();if(!camera.isPerspectiveCamera)return;
+  const bounds=new THREE.Box3();for(const model of modelObjects)if(model.visible)bounds.union(new THREE.Box3().setFromObject(model));
+  const clouds=viewer.scene.pointclouds.filter(cloud=>cloud.visible);if(clouds.length)bounds.union(viewer.scene.getBoundingBox(clouds));
+  if(bounds.isEmpty())return;bounds.applyMatrix4(camera.matrixWorldInverse);const near=-bounds.max.z,far=-bounds.min.z;if(far<=0)return;
+  camera.near=near>0?Math.max(0.0001,near*0.25):0.01;camera.far=Math.max(camera.near+1,far*1.25);camera.updateProjectionMatrix();
+  for(const cloud of clouds){cloud.material.near=camera.near;cloud.material.far=camera.far;}
+});
+async function loadCloud(cloud){
+  const result=await Potree.OctreeLoader.load(cloud.url);
+  if(!result.geometry)throw new Error('No geometry in '+cloud.name);
+  const object=new Potree.PointCloudOctree(result.geometry);object.name=cloud.name;
+  const position=object.getAttribute('position');if(position)object.material.elevationRange=[position.range[0][2],position.range[1][2]];
+  object.material.size=1;object.material.minSize=1;object.material.pointSizeType=Potree.PointSizeType.ADAPTIVE;
+  object.material.shape=Potree.PointShape.CIRCLE;object.material.activeAttributeName='rgba';viewer.scene.addPointCloud(object);fitScene();
+  await new Promise((resolve,reject)=>{const started=Date.now();const check=()=>{if(result.geometry.root.loaded)resolve();else if(Date.now()-started>30000)reject(new Error('Point decoder did not finish loading the root node. Check the hosting byte-range support and browser console.'));else setTimeout(check,50);};check();});
+}
+async function loadModel(model){
+  const manager=new THREE.LoadingManager();manager.onError=url=>window.showViewerFailure('Model asset could not load: '+url);
+  const loader=new OBJLoader(manager);
+  if(model.mtlUrl){const materials=await new MTLLoader(manager).loadAsync(model.mtlUrl);materials.preload();loader.setMaterials(materials);}
+  const object=await loader.loadAsync(model.objUrl);
+  // Rust rebases copied vertex coordinates in f64 before OBJLoader creates Float32 arrays.
+  object.rotation.x=Math.PI/2;object.position.set(...config.translation);object.name=model.name;
+  object.traverse(child=>{if(child.isMesh){for(const material of(Array.isArray(child.material)?child.material:[child.material])){material.side=THREE.DoubleSide;if(material.map){material.map.encoding=THREE.sRGBEncoding;material.map.needsUpdate=true;}}}else if(child.isLine)child.raycast=()=>{};});
+  viewer.scene.scene.add(object);modelObjects.push(object);fitScene();
+  viewer.onGUILoaded(()=>{const tree=$('#jstree_scene');const id=tree.jstree('create_node','other',{text:model.name,icon:Potree.resourcePath+'/icons/triangle.svg',data:object},'last',false,false);tree.jstree('check_node',id);});
+}
+let pending=config.clouds.length+config.models.length;
+status.textContent='Loading '+pending+' scene items…';
+const finish=()=>{pending--;if(!pending&&!window.viewerFailures.length){status.textContent='Ready';setTimeout(()=>status.style.display='none',1800);}};
+await Promise.allSettled([
+  ...config.clouds.map(cloud=>loadCloud(cloud).catch(error=>window.showViewerFailure(cloud.name+': '+error.message)).finally(finish)),
+  ...config.models.map(model=>loadModel(model).catch(error=>window.showViewerFailure(model.name+': '+error.message)).finally(finish))
+]);
+fitScene();
+</script>
+</body>
+</html>
