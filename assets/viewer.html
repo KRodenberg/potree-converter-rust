@@ -78,7 +78,7 @@ const modelObjects=[];
 function fitScene(){
   if(config.camera){viewer.scene.view.position.set(...config.camera.position);viewer.scene.view.lookAt(new THREE.Vector3(...config.camera.target));return;}
   const bounds=new THREE.Box3();
-  for(const cloud of viewer.scene.pointclouds){cloud.updateMatrixWorld(true);bounds.union(cloud.boundingBox.clone().applyMatrix4(cloud.matrixWorld));}
+  for(const cloud of viewer.scene.pointclouds){cloud.updateMatrixWorld(true);bounds.union(cloud.userData.frameBounds||cloud.boundingBox.clone().applyMatrix4(cloud.matrixWorld));}
   for(const model of modelObjects){model.updateMatrixWorld(true);bounds.union(new THREE.Box3().setFromObject(model));}
   if(bounds.isEmpty())return;
   const sphere=bounds.getBoundingSphere(new THREE.Sphere());
@@ -102,8 +102,8 @@ async function loadCloud(cloud){
   const result=await Potree.OctreeLoader.load(cloud.url);
   if(!result.geometry)throw new Error('No geometry in '+cloud.name);
   const object=new Potree.PointCloudOctree(result.geometry);object.name=cloud.name;
-  const position=object.getAttribute('position');if(position)object.material.elevationRange=[position.range[0][2],position.range[1][2]];
-  object.material.size=1;object.material.minSize=1;object.material.pointSizeType=Potree.PointSizeType.ADAPTIVE;
+  const position=object.getAttribute('position');if(position){object.material.elevationRange=[position.range[0][2],position.range[1][2]];object.userData.frameBounds=new THREE.Box3(new THREE.Vector3(...position.range[0]),new THREE.Vector3(...position.range[1]));}
+  object.material.size=1;object.material.minSize=1;object.material.pointSizeType=Potree.PointSizeType.FIXED;
   object.material.shape=Potree.PointShape.CIRCLE;object.material.activeAttributeName='rgba';viewer.scene.addPointCloud(object);fitScene();
   await new Promise((resolve,reject)=>{const started=Date.now();const check=()=>{if(result.geometry.root.loaded)resolve();else if(Date.now()-started>30000)reject(new Error('Point decoder did not finish loading the root node. Check the hosting byte-range support and browser console.'));else setTimeout(check,50);};check();});
 }

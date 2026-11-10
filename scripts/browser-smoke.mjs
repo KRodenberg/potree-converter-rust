@@ -46,7 +46,7 @@ try{
   const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++nextId;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   await send('Runtime.enable');await send('Page.enable');
   await send('Page.navigate',{url});
-  let state;
+  let state;let readySince=0;
   for(let attempt=0;attempt<240;attempt++){
     const result=await send('Runtime.evaluate',{expression:`(()=>{
       const element=document.getElementById('project-config');
@@ -65,7 +65,11 @@ try{
     })()`,returnByValue:true});
     state=result.result?.value;
     if(state?.failures?.length)throw new Error('Viewer failures: '+JSON.stringify(state));
-    if(state?.clouds?.length===state?.expectedClouds&&state.clouds.every(cloud=>cloud.rootLoaded&&cloud.visibleNodes>0)&&state.status==='Ready')break;
+    if(state?.clouds?.length===state?.expectedClouds&&state.clouds.every(cloud=>cloud.rootLoaded&&cloud.visibleNodes>0)&&state.status==='Ready'){
+      if(!readySince)readySince=Date.now();
+      // Root readiness precedes progressive detail requests and GPU drawing.
+      if(Date.now()-readySince>=4000)break;
+    }
     await delay(250);
   }
   if(!state?.clouds?.length||!state.clouds.every(cloud=>cloud.rootLoaded&&cloud.visibleNodes>0))throw new Error('Viewer did not render decoded clouds: '+JSON.stringify(state));

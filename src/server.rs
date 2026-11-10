@@ -72,6 +72,10 @@ pub fn start(root: PathBuf, port: u16) -> Result<PreviewServer> {
 }
 
 fn handle_request(stream: &mut TcpStream, root: &Path) -> std::io::Result<()> {
+    // Accepted sockets may inherit the listener's nonblocking mode on Windows.
+    // A large script/range must wait for socket backpressure instead of ending
+    // early with WouldBlock and a truncated Content-Length response.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let mut header = Vec::with_capacity(2048);
@@ -310,6 +314,37 @@ mod tests {
             "GET /octree.bin HTTP/1.1\r\nRange: bytes=11-\r\n\r\n"
         )
         .starts_with("HTTP/1.1 416"));
+    }
+
+    #[test]
+    fn large_responses_survive_socket_backpressure() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = vec![b'x'; 8 * 1024 * 1024];
+        fs::write(temp.path().join("large.js"), &body).unwrap();
+        let server = start(temp.path().to_path_buf(), 0).unwrap();
+        let address = server
+            .url
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+            .write_all(b"GET /large.js HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        // Let the sender fill its buffer before the receiver drains it.
+        thread::sleep(Duration::from_millis(150));
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        let header_end = response
+            .windows(4)
+            .position(|bytes| bytes == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        assert_eq!(&response[header_end..], body.as_slice());
+        assert!(String::from_utf8_lossy(&response[..header_end])
+            .contains(&format!("Content-Length: {}", body.len())));
     }
 
     #[test]

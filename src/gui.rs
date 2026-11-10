@@ -304,7 +304,7 @@ impl eframe::App for App {
                         }
                     } else {
                         let button = egui::Button::new(
-                        RichText::new("Convert to Potree")
+                            RichText::new("Convert to Potree")
                                 .strong()
                                 .color(Color32::from_rgb(13, 35, 29)),
                         )

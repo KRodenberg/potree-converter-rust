@@ -34,7 +34,7 @@ try {
     }
     New-Item -ItemType Directory -Path $stage | Out-Null
     Copy-Item -LiteralPath $executable -Destination $stage
-    foreach ($name in @('README.md', 'AGENTS.MD', 'LICENSE', 'THIRD_PARTY.md')) {
+    foreach ($name in @('README.md', 'AGENTS.MD', 'LICENSE', 'THIRD_PARTY.md', 'VALIDATION.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $stage
     }
 

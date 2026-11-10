@@ -1,5 +1,9 @@
 # Potree Converter for Windows
 
+Download the portable Windows executable from [GitHub Releases](https://github.com/KRodenberg/potree-converter-rust/releases/latest).
+
+See [release validation](VALIDATION.md) for the checks performed on this version.
+
 A portable Rust desktop application that converts **LAS, LAZ and E57** files into Potree 2 point clouds and a local web viewer. The layout follows the original PowerShell LAZ converter, with a cleaner native window, batch inputs, project details, optional OBJ models, camera controls, progress and a conversion log.
 
 The release executable contains the conversion engine and viewer assets. It does not require PowerShell, Python, PDAL, LASzip DLLs, the original PotreeConverter executable or a Rust installation. A browser and Windows graphics drivers are needed to display the desktop window and generated viewer.
