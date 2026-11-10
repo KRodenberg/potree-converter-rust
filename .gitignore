@@ -8,3 +8,6 @@
 *.mtl
 *.log
 
+# Keep the legacy viewer template outside the public repository.
+laz-potree-template.html
+

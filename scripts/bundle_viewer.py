@@ -8,7 +8,9 @@ source = Path(sys.argv[1]).resolve()
 target = Path(__file__).resolve().parents[1] / "assets" / "viewer-libs.zip"
 with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
     for file in sorted(source.rglob("*")):
-        if not file.is_file() or file.name == "ADWJlogohires.png":
+        if not file.is_file() or file.name.casefold() in {
+            "adwjlogohires.png", "laz-potree-template.html"
+        }:
             continue
         relative = file.relative_to(source).as_posix()
         data = file.read_bytes()

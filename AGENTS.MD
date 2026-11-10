@@ -85,3 +85,5 @@ Run `scripts/package.ps1` to produce `dist/Potree-Converter-1.0.0-windows-x64.zi
 
 The public repository is `https://github.com/KRodenberg/potree-converter-rust`. Publish source, lockfile, embedded redistributable viewer assets and documentation. Exclude `target`, `dist`, customer point clouds, OBJ assets, logs, secrets and generated projects. A binary may be distributed separately as a release artifact.
 
+Never commit the legacy `laz-potree-template.html` file or include it in embedded archives. The repository uses its own `assets/viewer.html` template. Keep the Git ignore rule and viewer-bundling exclusion for the legacy filename.
+
